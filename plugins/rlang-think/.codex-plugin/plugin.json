@@ -1,0 +1,40 @@
+{
+  "name": "rlang-think",
+  "version": "0.1.0",
+  "description": "Think in RLang — structured reasoning language for AI agents. 6x token compression on internal reasoning.",
+  "author": {
+    "name": "thekozugroup",
+    "url": "https://github.com/thekozugroup"
+  },
+  "homepage": "https://github.com/thekozugroup/rlang-think",
+  "repository": "https://github.com/thekozugroup/rlang-think",
+  "license": "Apache-2.0",
+  "keywords": [
+    "reasoning",
+    "thinking",
+    "ai-agents",
+    "token-compression",
+    "structured-reasoning"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "RLang Think",
+    "shortDescription": "Think in RLang. Structured reasoning. 6x fewer tokens.",
+    "longDescription": "Replaces verbose English chain-of-thought with RLang — a Rust-inspired structured reasoning language. Four mandatory phases (Frame/Explore/Verify/Decide), typed confidence, evidence chains. Works as Claude Code plugin and agent-agnostic skill.",
+    "developerName": "thekozugroup",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ],
+    "websiteURL": "https://github.com/thekozugroup/rlang-think",
+    "privacyPolicyURL": "https://github.com/thekozugroup/rlang-think/blob/main/README.md",
+    "termsOfServiceURL": "https://github.com/thekozugroup/rlang-think/blob/main/LICENSE",
+    "defaultPrompt": [
+      "Use RLang for all internal reasoning. Structure thinking into Frame/Explore/Verify/Decide phases."
+    ],
+    "composerIcon": "./assets/rlang-small.svg",
+    "logo": "./assets/rlang.svg",
+    "screenshots": [],
+    "brandColor": "#7aa2f7"
+  }
+}

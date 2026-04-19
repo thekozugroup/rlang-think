@@ -1,0 +1,6 @@
+interface:
+  display_name: "RLang Think"
+  short_description: "Think in RLang. Structured reasoning. 6x fewer tokens."
+  icon_small: "./assets/rlang-small.svg"
+  icon_large: "./assets/rlang.svg"
+  default_prompt: "Use $rlang-think for all internal reasoning. Structure thinking into Frame/Explore/Verify/Decide phases with typed confidence and evidence chains."
