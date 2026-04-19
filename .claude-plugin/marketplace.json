@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "rlang-think",
+  "description": "Think in RLang — structured reasoning language for AI agents. 6x token compression on internal reasoning.",
+  "owner": {
+    "name": "thekozugroup",
+    "url": "https://github.com/thekozugroup"
+  },
+  "plugins": [
+    {
+      "name": "rlang-think",
+      "description": "Structured reasoning in RLang. 4-phase traces, typed confidence, 6x fewer tokens.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

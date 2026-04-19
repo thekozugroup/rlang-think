@@ -1,0 +1,34 @@
+{
+  "name": "rlang-think",
+  "description": "Think in RLang — structured reasoning with 4 mandatory phases, typed confidence, and evidence chains. 6x token compression.",
+  "author": {
+    "name": "thekozugroup",
+    "url": "https://github.com/thekozugroup"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/rlang-activate.js",
+            "timeout": 5,
+            "statusMessage": "Loading RLang thinking mode..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/rlang-mode-tracker.js",
+            "timeout": 5,
+            "statusMessage": "Tracking RLang mode..."
+          }
+        ]
+      }
+    ]
+  }
+}
