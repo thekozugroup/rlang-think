@@ -30,6 +30,16 @@ const RLANG_PATTERNS = [
   /\bchk\([^)]+\)/,
 ];
 
+function simpleHash(str) {
+  // djb2 hash — fast, deterministic, good distribution
+  let hash = 5381;
+  for (let i = 0; i < (str || '').length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash = hash & hash; // Convert to 32-bit int
+  }
+  return Math.abs(hash).toString(36);
+}
+
 function hasRLangContent(text) {
   if (!text) return false;
   let matches = 0;
@@ -71,83 +81,184 @@ function findSessionFile(sessionId) {
   return null;
 }
 
-function extractLastConversation(sessionFile) {
+function isRealUserPrompt(entry) {
+  // Real user prompts have type "user" at the entry level (not tool results)
+  // and contain string content or text blocks (not tool_result blocks)
+  const msg = entry.message;
+  if (!msg || msg.role !== 'user') return false;
+
+  // Entry-level type field distinguishes real prompts from tool results
+  if (entry.type === 'tool_result') return false;
+
+  // If content is a string, it's a real prompt
+  if (typeof msg.content === 'string') return true;
+
+  // If content is an array, check for tool_result blocks
+  if (Array.isArray(msg.content)) {
+    const hasToolResult = msg.content.some(b => b.type === 'tool_result');
+    const hasText = msg.content.some(b => b.type === 'text');
+    // Tool results without any text = not a real prompt
+    // Tool results WITH text = could be a follow-up, but usually not
+    return hasText && !hasToolResult;
+  }
+
+  return false;
+}
+
+function getUserPromptText(entry) {
+  const msg = entry.message;
+  if (!msg) return null;
+  if (typeof msg.content === 'string') return msg.content;
+  if (Array.isArray(msg.content)) {
+    return msg.content
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('\n');
+  }
+  return null;
+}
+
+function extractFullTask(sessionFile) {
   const lines = fs.readFileSync(sessionFile, 'utf8').trim().split('\n');
+  const entries = [];
+  for (const line of lines) {
+    try { entries.push(JSON.parse(line)); } catch { /* skip */ }
+  }
 
-  let lastUserPrompt = null;
-  let lastThinking = null;
-  let lastResponse = null;
-  let lastModel = null;
+  // Step 1: Find the LAST real user prompt (walk backwards)
+  let promptIndex = -1;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (isRealUserPrompt(entries[i])) {
+      promptIndex = i;
+      break;
+    }
+  }
+  if (promptIndex === -1) return null;
 
-  // Walk backwards to find the last complete user → assistant pair
-  for (let i = lines.length - 1; i >= 0; i--) {
-    let entry;
-    try { entry = JSON.parse(lines[i]); } catch { continue; }
+  const userPrompt = getUserPromptText(entries[promptIndex]);
+  if (!userPrompt) return null;
 
-    const msg = entry.message;
-    if (!msg) continue;
+  // Step 2: Collect ALL assistant content from promptIndex forward
+  const thinkingBlocks = [];   // ordered list of all thinking blocks
+  const textBlocks = [];       // ordered list of all text responses
+  const toolCalls = [];        // ordered list of tool uses (name + summary)
+  let model = null;
+  let turnCount = 0;
 
-    if (msg.role === 'assistant' && !lastResponse) {
-      lastModel = msg.model || null;
-      if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (block.type === 'thinking' && !lastThinking) {
-            lastThinking = block.thinking;
-          }
-          if (block.type === 'text' && !lastResponse) {
-            lastResponse = block.text;
-          }
-        }
-      } else if (typeof msg.content === 'string' && !lastResponse) {
-        lastResponse = msg.content;
+  for (let i = promptIndex + 1; i < entries.length; i++) {
+    const msg = entries[i].message;
+    if (!msg || msg.role !== 'assistant') continue;
+
+    if (!model && msg.model) model = msg.model;
+    turnCount++;
+
+    if (!Array.isArray(msg.content)) {
+      if (typeof msg.content === 'string' && msg.content.trim()) {
+        textBlocks.push(msg.content.trim());
       }
+      continue;
     }
 
-    if (msg.role === 'user' && lastResponse) {
-      if (typeof msg.content === 'string') {
-        lastUserPrompt = msg.content;
-      } else if (Array.isArray(msg.content)) {
-        // Extract text parts from content array
-        lastUserPrompt = msg.content
-          .filter(b => b.type === 'text')
-          .map(b => b.text)
-          .join('\n');
+    for (const block of msg.content) {
+      if (block.type === 'thinking' && block.thinking) {
+        thinkingBlocks.push(block.thinking);
       }
-      break; // Found the pair
+      if (block.type === 'text' && block.text && block.text.trim()) {
+        textBlocks.push(block.text.trim());
+      }
+      if (block.type === 'tool_use') {
+        toolCalls.push({
+          name: block.name || 'unknown',
+          // Capture a short summary of tool input for context
+          input_summary: summarizeToolInput(block.input),
+        });
+      }
     }
   }
 
-  return { userPrompt: lastUserPrompt, thinking: lastThinking, response: lastResponse, model: lastModel };
+  if (thinkingBlocks.length === 0) return null;
+
+  // Step 3: Chain all thinking blocks with step markers
+  let chainedThinking;
+  if (thinkingBlocks.length === 1) {
+    chainedThinking = thinkingBlocks[0];
+  } else {
+    chainedThinking = thinkingBlocks
+      .map((block, i) => `// === Step ${i + 1}/${thinkingBlocks.length} ===\n${block}`)
+      .join('\n\n');
+  }
+
+  // Step 4: Build the final response (last text block is the primary response,
+  // earlier text blocks are intermediate status updates)
+  const finalResponse = textBlocks.length > 0 ? textBlocks[textBlocks.length - 1] : '';
+  const intermediateResponses = textBlocks.slice(0, -1);
+
+  return {
+    userPrompt,
+    thinking: chainedThinking,
+    response: finalResponse,
+    model,
+    turnCount,
+    thinkingBlockCount: thinkingBlocks.length,
+    toolCalls,
+    intermediateResponses,
+  };
 }
 
-function buildShareGPTEntry(userPrompt, thinking, response, metadata) {
+function summarizeToolInput(input) {
+  if (!input) return '';
+  if (typeof input === 'string') return input.slice(0, 100);
+  // For objects, grab key fields
+  const summary = [];
+  if (input.command) summary.push(`cmd: ${input.command.slice(0, 80)}`);
+  if (input.file_path) summary.push(`file: ${input.file_path}`);
+  if (input.pattern) summary.push(`pattern: ${input.pattern}`);
+  if (input.prompt) summary.push(`prompt: ${input.prompt.slice(0, 80)}`);
+  if (input.description) summary.push(input.description.slice(0, 80));
+  return summary.join(' | ') || JSON.stringify(input).slice(0, 100);
+}
+
+function buildShareGPTEntry(taskData, metadata) {
   const systemPrompt =
     "You are a reasoning assistant that thinks in RLang, a Rust-inspired structured reasoning language. " +
     "When solving problems, produce an RLang trace inside <think> tags with four phases: " +
     "Frame (observe evidence, establish beliefs), Explore (decompose, evaluate, plan), " +
     "Verify (check constraints), Decide (assert/hedge/suspend/reject). " +
+    "For multi-step tasks, produce a chained trace with step markers. " +
     "Then provide a clear English response.";
 
   // Build the assistant value: <think>RLANG</think>\n\nENGLISH
   let assistantValue = '';
-  if (thinking) {
-    assistantValue = `<think>\n${thinking.trim()}\n</think>\n\n`;
+  if (taskData.thinking) {
+    assistantValue = `<think>\n${taskData.thinking.trim()}\n</think>\n\n`;
   }
-  assistantValue += (response || '').trim();
+
+  // Include tool call context between thinking and response if present
+  if (taskData.toolCalls && taskData.toolCalls.length > 0) {
+    const toolSummary = taskData.toolCalls
+      .map(t => `[tool: ${t.name}] ${t.input_summary}`)
+      .join('\n');
+    assistantValue += `<!-- tools used:\n${toolSummary}\n-->\n\n`;
+  }
+
+  assistantValue += (taskData.response || '').trim();
 
   return {
     id: `trace_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     conversations: [
       { from: 'system', value: systemPrompt },
-      { from: 'human', value: (userPrompt || '').trim() },
+      { from: 'human', value: (taskData.userPrompt || '').trim() },
       { from: 'gpt', value: assistantValue },
     ],
     metadata: {
       source: 'rlang-think-plugin',
       session_id: metadata.sessionId || null,
       timestamp: new Date().toISOString(),
-      model: metadata.model || null,
+      model: taskData.model || null,
       phases: metadata.phases || [],
+      thinking_blocks: taskData.thinkingBlockCount || 1,
+      turns: taskData.turnCount || 1,
+      tools_used: (taskData.toolCalls || []).map(t => t.name),
       rlang_tokens_est: metadata.rlangTokens || 0,
       response_tokens_est: metadata.responseTokens || 0,
       compression_ratio: metadata.compressionRatio || null,
@@ -171,38 +282,67 @@ process.stdin.on('end', () => {
     const sessionFile = findSessionFile(sessionId);
     if (!sessionFile) return;
 
-    // Extract last conversation
-    const { userPrompt, thinking, response, model } = extractLastConversation(sessionFile);
-    if (!thinking || !userPrompt) return;
+    // Extract full task (all thinking blocks from last real user prompt)
+    const taskData = extractFullTask(sessionFile);
+    if (!taskData || !taskData.thinking || !taskData.userPrompt) return;
 
-    // Check for RLang content in thinking block
-    if (!hasRLangContent(thinking)) return;
+    // Check for RLang content in the chained thinking
+    if (!hasRLangContent(taskData.thinking)) return;
 
     // Extract metadata
-    const phases = extractPhases(thinking);
-    const rlangTokens = estimateTokens(thinking);
-    const responseTokens = estimateTokens(response);
+    const phases = extractPhases(taskData.thinking);
+    const rlangTokens = estimateTokens(taskData.thinking);
+    const responseTokens = estimateTokens(taskData.response);
     const compressionRatio = responseTokens > 0 ? (responseTokens / rlangTokens).toFixed(2) : null;
 
     // Build ShareGPT entry
-    const entry = buildShareGPTEntry(userPrompt, thinking, response, {
+    const entry = buildShareGPTEntry(taskData, {
       sessionId,
-      model,
       phases,
       rlangTokens,
       responseTokens,
       compressionRatio,
     });
 
-    // Save
-    fs.mkdirSync(TRACES_DIR, { recursive: true });
-    fs.appendFileSync(TRACES_FILE, JSON.stringify(entry) + '\n');
+    // Dedup: use a stable key from session_id + user prompt hash.
+    // On each Stop, we overwrite the previous trace for the same prompt,
+    // so only the final (most complete) version survives.
+    const promptHash = simpleHash(taskData.userPrompt);
+    const dedupeKey = `${sessionId}_${promptHash}`;
 
-    // Also update a stats file
+    fs.mkdirSync(TRACES_DIR, { recursive: true });
+
+    // Read existing traces, replace any with same dedupeKey, append if new
+    let existingLines = [];
+    try {
+      existingLines = fs.readFileSync(TRACES_FILE, 'utf8').trim().split('\n').filter(Boolean);
+    } catch { /* file doesn't exist yet */ }
+
+    let replaced = false;
+    const updatedLines = existingLines.map(line => {
+      try {
+        const existing = JSON.parse(line);
+        if (existing.metadata && existing.metadata._dedupe_key === dedupeKey) {
+          replaced = true;
+          entry.metadata._dedupe_key = dedupeKey;
+          return JSON.stringify(entry);
+        }
+      } catch { /* keep malformed lines */ }
+      return line;
+    });
+
+    if (!replaced) {
+      entry.metadata._dedupe_key = dedupeKey;
+      updatedLines.push(JSON.stringify(entry));
+    }
+
+    fs.writeFileSync(TRACES_FILE, updatedLines.join('\n') + '\n');
+
+    // Update stats file
     const statsFile = path.join(TRACES_DIR, 'stats.json');
     let stats = { total_traces: 0, total_rlang_tokens: 0, total_response_tokens: 0 };
     try { stats = JSON.parse(fs.readFileSync(statsFile, 'utf8')); } catch {}
-    stats.total_traces++;
+    if (!replaced) stats.total_traces++;
     stats.total_rlang_tokens += rlangTokens;
     stats.total_response_tokens += responseTokens;
     stats.last_collected = new Date().toISOString();
