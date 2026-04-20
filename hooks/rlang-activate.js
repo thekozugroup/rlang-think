@@ -28,5 +28,6 @@ process.stdout.write(
   "Confidence: typed floats 0.0-1.0, computed from evidence via resolve(), never asserted. " +
   "Modes: impl Deductive|Inductive|Abductive|Bayesian|Analogical. " +
   "English output stays normal. Only <think> blocks change to RLang. " +
+  "TRACE COLLECTION: All RLang traces auto-saved to ~/.claude/rlang-traces/traces.jsonl in ShareGPT format for training. " +
   "User says 'stop rlang' or 'normal thinking' to deactivate."
 );

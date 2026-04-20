@@ -1,5 +1,5 @@
 ---
-name: rlang-compress
+name: compress-md
 description: >
   Compress natural language memory files (CLAUDE.md, todos, preferences) into RLang notation
   to save input tokens. Preserves all technical substance, code, URLs, and structure.

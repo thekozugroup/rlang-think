@@ -1,5 +1,5 @@
 ---
-name: rlang-think
+name: think
 description: >
   Structured reasoning mode. All internal thinking uses RLang — a Rust-inspired
   reasoning language with typed confidence, evidence chains, and four mandatory phases.

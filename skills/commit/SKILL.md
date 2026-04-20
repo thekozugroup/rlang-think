@@ -1,5 +1,5 @@
 ---
-name: rlang-commit
+name: commit
 description: >
   Generate ultra-compressed commit messages using RLang operator notation.
   Preserves semantic meaning of changes while cutting message tokens 50-70%.

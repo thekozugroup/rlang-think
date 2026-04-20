@@ -1,5 +1,5 @@
 ---
-name: rlang-review
+name: review
 description: >
   Code review comments using RLang structured reasoning. Each finding is a mini-trace
   with evidence, confidence, and clear action. Cuts review noise while keeping precision.
